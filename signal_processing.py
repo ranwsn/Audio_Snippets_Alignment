@@ -8,70 +8,65 @@ from plotly.subplots import make_subplots
 from scipy.signal import hilbert
 
 
-def cross_correlation(x1: np.ndarray, x2: np.ndarray, fs: Optional[int] = None,
+def cross_correlation(x_ref: np.ndarray, x_target: np.ndarray, fs: Optional[int] = None,
                       hilbert_flag: bool = False, normalize_flag: bool = False,
                       freq_range: Optional[Union[np.ndarray, list]] = None,
                       calc_offset: bool = False, plot_flag: bool = False
                       ) -> Tuple[np.ndarray, np.ndarray, Union[float, None]]:
     """
     Calculate cross correlation between 2 signals using FFT.
-    Output lags are defined relatively to x1, i.e. - if the lag is T, it
-    corresponds to inner product between x1(t) and x2(t-T)
-    :param x1: the first signal
-    :param x2: the second signal
+    Output lags are defined relatively to x_ref, i.e. - if the lag is T, it
+    corresponds to inner product between x_ref(t) and x_target(t-T)
+    :param x_ref: the reference signal
+    :param x_target: the target signal to be aligned
     :param fs: optional, sampling rate. If given - then output lags are given in
     seconds
+    :param hilbert_flag: boolean flag, whether to use hilbert for envelope
+    detection
+    :param normalize_flag: boolean flag, whether to normalize by magnitude of
+    the reference signal (i.e. whiten the signal)
+    :param freq_range: an optional vector of 2 values, containing [f_min, f_max]
+    for filtering the signal in frequency domain
+    :param calc_offset: a boolean flag, whether to calculate the optimal offset
+    by taking the maximum
     :param plot_flag: whether to plot the cross correlation output
-    :return: (cc, lags) - where cc contains the cross correlation values and
-    lags are the shifts (if fs is given then lags is given in seconds, otherwise
-    in samples)
+    :return: (cc, lags, offset) - where cc contains the cross correlation
+    values, lags are the shifts, and offset is the estimated offset.
+    If fs is given then lags is given in seconds, otherwise in samples.
+    If calc_offset is false, then offset is None.
     """
 
     # preliminaries
-    assert (x1.ndim == 1) & (x2.ndim == 1)
-    len1 = x1.size
-    len2 = x2.size
+    assert (x_ref.ndim == 1) & (x_target.ndim == 1)
+    len1 = x_ref.size
+    len2 = x_target.size
     len_cc = len1 + len2 - 1
 
     # compute
-    x1_fft = fft.rfft(x1, len_cc)
-    x2_fft = fft.rfft(x2, len_cc)
+    x1_fft = fft.rfft(x_ref, len_cc)
+    x2_fft = fft.rfft(x_target, len_cc)
     cc_fft = x1_fft * np.conj(x2_fft)
+
+    # normalize by magnitude of reference signal
     if normalize_flag:
         magnitude_factor = np.abs(x1_fft) ** 2
-        # magnitude_factor = np.abs(x2_fft) ** 2  # bad, since it is the shorter signal
-        # magnitude_factor = np.abs(x1_fft) * np.abs(x2_fft)
-        # magnitude_factor += np.percentile(magnitude_factor, 80)
-        shaping_factor = 1
+        cc_fft = (cc_fft / magnitude_factor)
 
-        # noise_var_est = np.percentile(np.abs(x2_fft) ** 2, 60)
-        # source_var_est = np.maximum(0, np.abs(x2_fft) ** 2 - noise_var_est)
-        # shaping_factor = (source_var_est / (noise_var_est + source_var_est))
-        k = 2000
-        # x2_spec = signal.convolve(np.abs(x2_fft) ** 2, np.ones(k)/k, mode="same")
-        x1_spec = signal.convolve(np.abs(x1_fft) ** 2, np.ones(k)/k, mode="same")
-        # x1x2_spec = np.abs(signal.convolve(x2_fft.conj()*x1_fft, np.ones(k)/k, mode="same"))
-        # mask = (x1_spec > np.percentile(x1_spec, 50)).astype(int)
-        # s_spec = (x1x2_spec / np.sqrt(x1_spec)) ** 2
-        # n_spec = np.maximum(0, x2_spec - s_spec)
-        # # shaping_factor = (s_spec / (s_spec + n_spec)) * mask
-        # gamma = x1x2_spec / np.sqrt(x1_spec*x2_spec)
-        # shaping_factor = gamma**2 / (1 - gamma ** 2)
-        shaping_factor = np.zeros_like(cc_fft)
-        shaping_factor[:shaping_factor.size//2] = 1
-
-        cc_fft = (cc_fft / magnitude_factor) * shaping_factor
-
+    # frequency filtering
     if freq_range is not None:
         f_vec = fft.rfftfreq(len_cc, 1/fs)
         assert np.size(freq_range) == 2
         idx = (f_vec < freq_range[0]) | (f_vec > freq_range[1])
         cc_fft[idx] = 0
+
+    # transform back to time domain
     cc = fft.irfft(cc_fft, len_cc)
     cc = np.roll(cc, len2 - 1)
     lags = np.arange(len_cc) - (len2 - 1)
     if fs is not None:
         lags = lags / fs
+
+    # hilbert transform
     if hilbert_flag:
         cc = np.abs(hilbert(cc))
 
@@ -86,7 +81,7 @@ def cross_correlation(x1: np.ndarray, x2: np.ndarray, fs: Optional[int] = None,
         fig = px.line(y=cc, x=lags)
         lags_units = "samples" if fs is None else "seconds"
         fig.update_xaxes(title=f"Shift [{lags_units}]")
-        fig.update_yaxes(title="Cross Correlation")
+        fig.update_yaxes(title="Processed Cross Correlation")
         fig.show()
 
     return cc, lags, offset

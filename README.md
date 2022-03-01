@@ -14,3 +14,6 @@ reference signal, and evaluate the fingerprints method on it (good for
 hyperparameters tuning).
 
 I used Python 3.8, the requirements are given in a file.
+
+Note that part of the algorithm implementation is based on the code in this repository:
+https://github.com/worldveil/dejavu
